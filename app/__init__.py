@@ -1,0 +1,1 @@
+"""Ole Trading Assistant package."""

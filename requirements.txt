@@ -1,0 +1,5 @@
+python-dotenv>=1.0.1
+openai>=1.66.0
+pydantic>=2.7.4
+python-telegram-bot>=21.4
+requests>=2.32.0
