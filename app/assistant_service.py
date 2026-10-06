@@ -70,8 +70,10 @@ class TradingAssistantService:
     def _system_prompt(self) -> str:
         return (
             f"You are {self.settings.assistant_name}, a personal US stock trading assistant.\n"
-            "Use the available read-only tools whenever the user asks for current, dynamic, "
+            "Use the available tools whenever the user asks for current, dynamic, "
             "account-specific, or locally stored information.\n"
+            "When the user clearly asks to add or remove a symbol from the Watchlist, use the "
+            "corresponding Watchlist tool instead of asking them to type a command.\n"
             "Never invent quotes, holdings, order status, technical indicators, watchlists, "
             "or saved conversation history.\n"
             "Tool results can be delayed or stale; preserve any timestamps and data-mode warnings.\n"
@@ -114,7 +116,6 @@ class TradingAssistantService:
                 self.settings.market_sync_enabled,
                 f"every {max(60, self.settings.market_sync_interval_seconds)} seconds",
             ),
-            SetupItem("Approval mode", True, self.settings.approval_mode),
         ]
 
     def format_setup_message(self) -> str:
@@ -164,8 +165,7 @@ class TradingAssistantService:
             f"- IBKR gateway: {self.settings.ibkr_base_url}",
             f"- IBKR trading mode: {self.settings.ibkr_trading_mode}",
             f"- Market sync enabled: {str(self.settings.market_sync_enabled).lower()}",
-            f"- Approval mode: {self.settings.approval_mode}",
-            f"- Read-only orchestrator: {'enabled' if self.orchestrator else 'disabled'}",
+            f"- Orchestrator: {'enabled' if self.orchestrator else 'disabled'}",
             f"- Active chat turns: {session.turn_count if session else 0}",
         ]
         return "\n".join(lines)
@@ -178,12 +178,30 @@ class TradingAssistantService:
     def ibkr_accounts(self) -> str:
         if self.trading_service.has_pending_broker_reply:
             return self.trading_service.pending_reply_message()
-        return self.ibkr_client.format_accounts()
+        try:
+            return self.ibkr_client.format_accounts()
+        except Exception as exc:
+            return self._ibkr_read_error("account list", exc)
 
     def ibkr_portfolio(self) -> str:
         if self.trading_service.has_pending_broker_reply:
             return self.trading_service.pending_reply_message()
-        return self.ibkr_client.format_portfolio_snapshot()
+        try:
+            return self.ibkr_client.format_portfolio_snapshot()
+        except Exception as exc:
+            return self._ibkr_read_error("portfolio", exc)
+
+    @staticmethod
+    def _ibkr_read_error(operation: str, exc: Exception) -> str:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 401:
+            return (
+                f"IBKR {operation} unavailable: the Gateway session is unauthorized. "
+                "Open https://localhost:5000, log in again, then retry."
+            )
+        if status_code:
+            return f"IBKR {operation} unavailable: HTTP {status_code}."
+        return f"IBKR {operation} unavailable: {type(exc).__name__}."
 
     def create_order(self, user_id: str, arguments: list[str]) -> str:
         return self.trading_service.create_order(user_id, arguments)
@@ -226,6 +244,11 @@ class TradingAssistantService:
         if self.trading_service.has_pending_broker_reply:
             return self.trading_service.pending_reply_message()
         return self.market_data_service.format_technical(symbol, timeframe)
+
+    def price_history(self, symbol: str, period: str) -> str:
+        if self.trading_service.has_pending_broker_reply:
+            return self.trading_service.pending_reply_message()
+        return self.market_data_service.format_price_history(symbol, period)
 
     def market_sync(self) -> str:
         if self.trading_service.has_pending_broker_reply:
@@ -430,7 +453,6 @@ class TradingAssistantService:
     def _runtime_context(self, user_id: str) -> str:
         lines = [
             f"Assistant name: {self.settings.assistant_name}",
-            f"Approval mode: {self.settings.approval_mode}",
             f"Model: {self.settings.openai_model}",
             f"User watchlist: {self.market_data_service.context_summary(user_id)}",
             "Stored daily technical state:",

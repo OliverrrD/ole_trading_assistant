@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.ibkr_client import IbkrClient, IbkrContract, IbkrQuote
 from app.market_store import MarketBar, MarketStore, TechnicalSnapshot
@@ -17,6 +17,12 @@ HISTORY_SPECS = {
     "10m": ("1w", "10min"),
     "1h": ("1m", "1h"),
     "1d": ("1y", "1d"),
+}
+PRICE_HISTORY_PERIOD_DAYS = {
+    "1m": 31,
+    "3m": 93,
+    "6m": 186,
+    "1y": 366,
 }
 
 
@@ -166,6 +172,126 @@ class MarketDataService:
             return self._format_technical_result(contract, snapshot, counts) + refresh_warning
         except Exception as exc:
             return f"Technical analysis failed: {exc}"
+
+    def price_history(self, symbol: str, period: str = "1y") -> dict[str, object]:
+        try:
+            normalized_symbol = self._validate_symbol(symbol)
+            normalized_period = period.strip().lower() or "1y"
+            if normalized_period not in PRICE_HISTORY_PERIOD_DAYS:
+                return {
+                    "ok": False,
+                    "error": "Period must be one of: 1m, 3m, 6m, 1y.",
+                }
+
+            contract = self.store.find_instrument(normalized_symbol)
+            if contract is None:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"{normalized_symbol} has no stored history. "
+                        f"Add it to the Watchlist first."
+                    ),
+                }
+
+            refresh_warning = ""
+            try:
+                self.sync_contract_timeframe(contract, "1d")
+            except Exception as exc:
+                refresh_warning = f"Daily history refresh failed; using stored bars ({type(exc).__name__})."
+
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                days=PRICE_HISTORY_PERIOD_DAYS[normalized_period]
+            )
+            cutoff_ms = int(cutoff.timestamp() * 1000)
+            bars = [
+                bar
+                for bar in self.store.get_market_bars(contract.conid, "1d", limit=400)
+                if bar.timestamp_ms >= cutoff_ms
+            ]
+            if not bars:
+                return {
+                    "ok": False,
+                    "error": f"No stored daily price history for {normalized_symbol}.",
+                    "refresh_warning": refresh_warning,
+                }
+
+            first_close = bars[0].close
+            last_close = bars[-1].close
+            return_pct = (
+                ((last_close / first_close) - 1) * 100 if first_close else None
+            )
+            running_peak = bars[0].close
+            max_drawdown_pct = 0.0
+            for bar in bars:
+                running_peak = max(running_peak, bar.close)
+                if running_peak:
+                    drawdown_pct = ((bar.close / running_peak) - 1) * 100
+                    max_drawdown_pct = min(max_drawdown_pct, drawdown_pct)
+
+            formatted_bars = [
+                {
+                    "date": datetime.fromtimestamp(
+                        bar.timestamp_ms / 1000,
+                        timezone.utc,
+                    ).date().isoformat(),
+                    "open": round(bar.open, 4),
+                    "high": round(bar.high, 4),
+                    "low": round(bar.low, 4),
+                    "close": round(bar.close, 4),
+                    "volume": bar.volume,
+                }
+                for bar in bars
+            ]
+            return {
+                "ok": True,
+                "symbol": contract.symbol,
+                "timeframe": "1d",
+                "period": normalized_period,
+                "bar_count": len(bars),
+                "first_date": formatted_bars[0]["date"],
+                "last_date": formatted_bars[-1]["date"],
+                "first_close": round(first_close, 4),
+                "last_close": round(last_close, 4),
+                "return_pct": round(return_pct, 2) if return_pct is not None else None,
+                "highest_high": round(max(bar.high for bar in bars), 4),
+                "lowest_low": round(min(bar.low for bar in bars), 4),
+                "max_drawdown_pct": round(max_drawdown_pct, 2),
+                "refresh_warning": refresh_warning or None,
+                "bars": formatted_bars,
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"Price history failed: {type(exc).__name__}.",
+            }
+
+    def format_price_history(self, symbol: str, period: str = "1y") -> str:
+        history = self.price_history(symbol, period)
+        if not history.get("ok"):
+            warning = history.get("refresh_warning")
+            suffix = f"\n- warning: {warning}" if warning else ""
+            return f"Price history unavailable: {history.get('error', 'unknown error')}{suffix}"
+
+        lines = [
+            f"Daily price history for {history['symbol']} ({history['period']}):",
+            f"- range: {history['first_date']} to {history['last_date']}",
+            f"- trading days: {history['bar_count']}",
+            f"- first / last close: {history['first_close']} / {history['last_close']}",
+            f"- return: {self._percent(history['return_pct'])}",
+            f"- highest high / lowest low: {history['highest_high']} / {history['lowest_low']}",
+            f"- maximum close-to-close drawdown: {self._percent(history['max_drawdown_pct'])}",
+        ]
+        if history.get("refresh_warning"):
+            lines.append(f"- warning: {history['refresh_warning']}")
+        lines.append("")
+        lines.append("date | open | high | low | close | volume")
+        for bar in history["bars"]:
+            volume = "N/A" if bar["volume"] is None else f"{bar['volume']:.0f}"
+            lines.append(
+                f"{bar['date']} | {bar['open']} | {bar['high']} | "
+                f"{bar['low']} | {bar['close']} | {volume}"
+            )
+        return "\n".join(lines)
 
     def format_market_sync(self) -> str:
         result = self.sync_watchlist_once()

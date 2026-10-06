@@ -63,7 +63,6 @@ class Settings:
     market_sync_enabled: bool = _env_flag("MARKET_SYNC_ENABLED", True)
     market_sync_interval_seconds: int = _env_int("MARKET_SYNC_INTERVAL_SECONDS", 300)
     agent_history_max_entries: int = _env_int("AGENT_HISTORY_MAX_ENTRIES", 200)
-    approval_mode: str = os.getenv("APPROVAL_MODE", "manual")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
     @property

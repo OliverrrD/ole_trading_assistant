@@ -37,8 +37,9 @@ class TelegramBot:
             "Use /setup to check configuration, /model_status to inspect the model gateway, "
             "/status to inspect assistant status, /ibkr_status to inspect the IBKR gateway, "
             "/accounts and /portfolio to read IBKR data, /order to draft a paper order, "
-            "/watch, /quote, and /technical to inspect market data, /orders to query paper orders, "
-            "/reset_chat to start fresh, or ask in plain language and let the read-only "
+            "/watch, /quote, /technical, and /price_history to inspect market data, "
+            "/orders to query paper orders, "
+            "/reset_chat to start fresh, or ask in plain language and let the "
             "orchestrator choose the appropriate data tool."
         )
 
@@ -140,6 +141,24 @@ class TelegramBot:
         timeframe = context.args[1].strip() if len(context.args) == 2 else "1d"
         message = await asyncio.to_thread(self.assistant_service.technical, symbol, timeframe)
         await update.message.reply_text(message)
+
+    async def price_history(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.message:
+            return
+        if not 1 <= len(context.args) <= 2:
+            await update.message.reply_text(
+                "Usage: /price_history <symbol> [1m|3m|6m|1y]"
+            )
+            return
+        symbol = context.args[0].strip()
+        period = context.args[1].strip() if len(context.args) == 2 else "1y"
+        message = await asyncio.to_thread(
+            self.assistant_service.price_history,
+            symbol,
+            period,
+        )
+        for chunk in self._message_chunks(message):
+            await update.message.reply_text(chunk)
 
     async def market_sync(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message:
@@ -283,6 +302,7 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("watchlist", self.watchlist))
         self.application.add_handler(CommandHandler("quote", self.quote))
         self.application.add_handler(CommandHandler("technical", self.technical))
+        self.application.add_handler(CommandHandler("price_history", self.price_history))
         self.application.add_handler(CommandHandler("market_sync", self.market_sync))
         self.application.add_handler(CommandHandler("market_monitor", self.market_monitor))
         self.application.add_handler(CommandHandler("history", self.history))
@@ -297,6 +317,23 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("reset_chat", self.reset_chat))
         self.application.add_handler(CommandHandler("ask", self.ask))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_text))
+
+    @staticmethod
+    def _message_chunks(message: str, limit: int = 3800) -> list[str]:
+        chunks: list[str] = []
+        current: list[str] = []
+        current_length = 0
+        for line in message.splitlines():
+            added_length = len(line) + (1 if current else 0)
+            if current and current_length + added_length > limit:
+                chunks.append("\n".join(current))
+                current = []
+                current_length = 0
+            current.append(line)
+            current_length += len(line) + (1 if len(current) > 1 else 0)
+        if current:
+            chunks.append("\n".join(current))
+        return chunks or [""]
 
     def run(self) -> None:
         self.register_handlers()
