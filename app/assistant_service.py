@@ -70,6 +70,8 @@ class TradingAssistantService:
     def _system_prompt(self) -> str:
         return (
             f"You are {self.settings.assistant_name}, a personal US stock trading assistant.\n"
+            "Understand requests in any language and reply in the user's language unless they "
+            "explicitly request another language.\n"
             "Use the available tools whenever the user asks for current, dynamic, "
             "account-specific, or locally stored information.\n"
             "When the user clearly asks to add or remove a symbol from the Watchlist, use the "
@@ -82,6 +84,8 @@ class TradingAssistantService:
             "You must never ask the system to execute a trade without explicit user approval.\n"
             "No execution tools are available in chat. Direct trade requests to the explicit "
             "/order command, which still requires /confirm.\n"
+            "When a message expresses a stock-specific risk, decision, trade idea, thesis, or "
+            "outcome, call classify_stock_memory once based on its meaning, regardless of language.\n"
             "Keep replies concise and practical."
         )
 
@@ -360,7 +364,7 @@ class TradingAssistantService:
             response_id=response.response_id,
             max_entries=self.settings.agent_history_max_entries,
             symbol_conids=tuple(contract.conid for contract in linked_contracts),
-            memory_type=self._classify_memory(message),
+            memory_type=self._memory_type_from_response(response),
         )
         self.market_store.save_tool_executions(
             user_id=user_id,
@@ -412,24 +416,21 @@ class TradingAssistantService:
             self.market_store.link_observation_symbols(
                 observation.observation_id,
                 tuple(contract.conid for contract in contracts),
-                self._classify_memory(observation.user_message),
+                "analysis",
                 observation.created_at,
             )
         self._stock_memory_indexed_users.add(user_id)
 
     @staticmethod
-    def _classify_memory(message: str) -> str:
-        normalized = message.casefold()
-        categories = (
-            ("outcome", ("结果", "后来", "已成交", "盈利", "亏损", "outcome", "filled")),
-            ("decision", ("我决定", "我打算", "我的计划", "我会", "i decided", "i plan", "i will")),
-            ("trade_idea", ("考虑买", "考虑卖", "是否买", "是否卖", "要不要买", "要不要卖", "should i buy", "should i sell")),
-            ("thesis", ("长期看好", "投资逻辑", "我的逻辑", "thesis", "long-term view")),
-            ("risk", ("风险", "担心", "止损", "回撤", "risk", "concern", "drawdown")),
-        )
-        for category, keywords in categories:
-            if any(keyword in normalized for keyword in keywords):
-                return category
+    def _memory_type_from_response(response: object) -> str:
+        allowed_types = {"risk", "decision", "trade_idea", "thesis", "outcome"}
+        for execution in getattr(response, "tool_executions", ()):
+            if getattr(execution, "name", "") != "classify_stock_memory":
+                continue
+            arguments = getattr(execution, "arguments", {})
+            memory_type = arguments.get("memory_type") if isinstance(arguments, dict) else None
+            if memory_type in allowed_types:
+                return memory_type
         return "analysis"
 
     def _history_context(self, user_id: str) -> str:

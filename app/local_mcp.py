@@ -227,6 +227,13 @@ class LocalTradingMcpSession:
                 ],
             }
 
+        @self.server.tool(annotations=read_only)
+        async def classify_stock_memory(
+            memory_type: Literal["risk", "decision", "trade_idea", "thesis", "outcome"],
+        ) -> dict[str, Any]:
+            """Classify the semantic intent of a stock-specific memory, independent of language."""
+            return {"ok": True, "memory_type": memory_type}
+
     @staticmethod
     def _tool_error(operation: str, exc: Exception) -> dict[str, Any]:
         status_code = getattr(exc, "status_code", None)

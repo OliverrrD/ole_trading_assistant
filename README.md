@@ -6,10 +6,10 @@ A local-first, LLM-powered trading copilot for Telegram. It combines OpenAI tool
 
 ## Highlights
 
-- **Natural-language orchestration:** Routes requests to local MCP tools for watchlists, quotes, price history, technical indicators, portfolio data, paper-order status, and stock memory.
+- **Multilingual orchestration:** Detects the user's language, replies in kind, and routes requests to local MCP tools for watchlists, quotes, price history, technical indicators, portfolio data, paper-order status, and stock memory.
 - **Market-data pipeline:** Stores layered IBKR OHLCV history in SQLite and refreshes watched symbols in the background.
 - **Technical analysis:** Calculates SMA, EMA, RSI, ATR, volume ratio, period returns, range statistics, and maximum drawdown locally.
-- **Persistent retrieval:** Indexes conversations by stock and retrieves relevant analysis, risks, decisions, and outcomes in later chats.
+- **Persistent retrieval:** Uses language-independent semantic labels to index conversations by stock and retrieve relevant analysis, risks, decisions, and outcomes in later chats.
 - **Paper-trading safety:** Requires What-If preview, explicit confirmation tokens, account verification, notional limits, and broker-warning confirmation.
 - **Privacy controls:** Keeps credentials in `.env`, restricts Telegram users through an allowlist, redacts broker responses from local memory, and suppresses secret-bearing HTTP logs.
 
